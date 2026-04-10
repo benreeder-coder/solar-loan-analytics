@@ -1,0 +1,497 @@
+# Solar Loan Portfolio: Domain Knowledge Base
+# This file encodes tribal knowledge for the conversational analytics engine.
+# Every definition, formula, and caveat here is the single source of truth.
+
+columns:
+  loan_id:
+    dtype: string
+    business_meaning: "Unique loan identifier. Format: L0001-L2450."
+    example_values: ["L0001", "L1234", "L2450"]
+
+  origination_date:
+    dtype: date
+    business_meaning: "Date the loan was funded. Use for vintage/cohort analysis. Derive quarter as 'YYYY QN'."
+    example_values: ["2024-01-18", "2025-06-15"]
+
+  state:
+    dtype: string
+    business_meaning: "2-letter US state code for the solar installation. Solar production and utility costs vary significantly by state."
+    enum_values: ["AZ", "CA", "CO", "CT", "FL", "MA", "NC", "NJ", "NY", "TX"]
+
+  credit_tier:
+    dtype: string
+    business_meaning: "Borrower credit risk tier at origination. Primary risk stratification for the portfolio."
+    enum_values: ["A", "B", "C"]
+    tier_labels:
+      A: "Prime"
+      B: "Near-prime"
+      C: "Subprime"
+
+  loan_amount:
+    dtype: float
+    business_meaning: "Loan principal in USD. Highly correlated with system_size_kw."
+    unit: "USD"
+
+  system_size_kw:
+    dtype: float
+    business_meaning: "Installed solar system capacity in kilowatts."
+    unit: "kW"
+
+  loan_term_months:
+    dtype: int
+    business_meaning: "Repayment term in months. Discrete set of allowed values."
+    enum_values: [120, 180, 240, 300]
+    labels:
+      120: "10 years"
+      180: "15 years"
+      240: "20 years"
+      300: "25 years"
+
+  interest_rate:
+    dtype: float
+    business_meaning: "Annual interest rate as a percentage (e.g., 5.25 means 5.25%). Higher rates correspond to riskier credit tiers."
+    unit: "%"
+
+  monthly_payment:
+    dtype: float
+    business_meaning: "Monthly loan payment amount in USD. What the borrower pays each month."
+    unit: "USD"
+
+  installer_partner:
+    dtype: string
+    business_meaning: "The solar installation company that performed the install. 5 partners in the portfolio."
+    enum_values:
+      - "Apex Solar Co"
+      - "BrightPath Solar"
+      - "GreenRoof Energy"
+      - "SunPro Electric"
+      - "TerraWatt Installations"
+
+  cents_per_watt_of_solar_electricity:
+    dtype: float
+    business_meaning: "Proxy for what the borrower pays per unit of solar energy. See caveats for unit ambiguity."
+    unit: "cents (per watt or per kWh - ambiguous)"
+
+  cents_per_watt_of_utility_electricity:
+    dtype: float
+    business_meaning: "Average local utility electricity cost. Baseline for calculating whether solar saves the borrower money."
+    unit: "cents (per watt or per kWh - ambiguous)"
+
+  is_delinquent:
+    dtype: bool
+    business_meaning: "TRUE if the loan is 30+ days past due. This is a point-in-time snapshot, NOT a time-series status. There is no monthly payment history."
+    values: [true, false]
+
+  days_past_due:
+    dtype: int
+    business_meaning: "Number of days past due. 0 if current, 30+ if delinquent. Use for severity analysis among delinquent loans."
+    unit: "days"
+
+
+derived_metrics:
+  savings_spread:
+    formula: "cents_per_watt_of_utility_electricity - cents_per_watt_of_solar_electricity"
+    pandas: "df['cents_per_watt_of_utility_electricity'] - df['cents_per_watt_of_solar_electricity']"
+    description: "Difference between utility cost and solar cost. Positive means borrower saves money with solar. Negative means solar costs more than utility."
+    unit: "cents"
+    caveats: ["cents_per_watt_unit_ambiguity"]
+
+  savings_rate_pct:
+    formula: "(savings_spread / cents_per_watt_of_utility_electricity) * 100"
+    pandas: "((df['cents_per_watt_of_utility_electricity'] - df['cents_per_watt_of_solar_electricity']) / df['cents_per_watt_of_utility_electricity']) * 100"
+    description: "Percentage savings relative to utility cost."
+    unit: "%"
+    caveats: ["cents_per_watt_unit_ambiguity"]
+
+  origination_quarter:
+    formula: "YYYY QN from origination_date"
+    pandas: "df['origination_date'].apply(lambda d: f\"{d.year} Q{(d.month-1)//3+1}\")"
+    description: "The calendar quarter when the loan was funded. Used for cohort/vintage analysis."
+
+  delinquency_rate:
+    formula: "count(is_delinquent=TRUE) / count(all)"
+    pandas: "group['is_delinquent'].mean() * 100"
+    description: "Percentage of loans that are 30+ days past due within a group."
+    unit: "%"
+
+  mix_adjusted_delinquency:
+    formula: "sum(reference_tier_share * current_tier_delinquency_rate) for each tier"
+    description: "What the overall delinquency rate would be if credit tier proportions matched a reference quarter (default: 2024 Q1). Isolates credit mix shift from true performance change."
+    reference_quarter: "2024 Q1"
+    reference_shares:
+      A: 0.62
+      B: 0.32
+      C: 0.06
+
+  negative_spread_flag:
+    formula: "savings_spread < 0"
+    pandas: "(df['cents_per_watt_of_utility_electricity'] - df['cents_per_watt_of_solar_electricity']) < 0"
+    description: "TRUE if borrower is paying more for solar than they would for utility electricity."
+
+
+business_rules:
+  delinquent_definition: "A loan is delinquent if it is 30 or more days past due (days_past_due >= 30)."
+  credit_tiers:
+    A: "Prime borrowers. Lowest risk. Typical delinquency rate: 1-4%."
+    B: "Near-prime borrowers. Moderate risk. Typical delinquency rate: 6-10%."
+    C: "Subprime borrowers. Highest risk. Typical delinquency rate: 19-34%."
+  dpd_severity_bands:
+    early: "30-59 days past due. Early-stage delinquency."
+    mid: "60-89 days past due. Moderate delinquency."
+    late: "90-119 days past due. Serious delinquency."
+    severe: "120+ days past due. Severe delinquency, likely headed to default."
+  spread_interpretation:
+    positive: "Borrower saves money with solar vs utility. Higher spread = stronger value proposition."
+    negative: "Borrower pays MORE for solar than utility. Negative spread correlates with higher delinquency."
+    zero: "Breakeven. Borrower pays roughly the same."
+
+
+caveats:
+  cents_per_watt_unit_ambiguity:
+    text: "The 'cents per watt' columns are labeled 'cents per watt' in the data but may actually represent cents per kWh. The unit has not been confirmed with the client. Use these columns for relative comparisons (e.g., savings spread direction and magnitude) but caveat any absolute claims about utility savings."
+    triggers: ["cents_per_watt", "savings", "spread", "utility", "solar cost", "electricity cost"]
+
+  point_in_time_snapshot:
+    text: "is_delinquent is a point-in-time snapshot, not a time series. We do not have monthly payment status history. A loan marked current today may have been delinquent previously, and vice versa. Delinquency rates represent the portfolio's state at the snapshot date, not cumulative lifetime delinquency."
+    triggers: ["delinquency rate", "trend", "over time", "changed"]
+
+  cohort_age_bias:
+    text: "Newer loan cohorts have had less time to become delinquent. Q4 2025 loans are the youngest vintage and have had the least seasoning. Despite this, Q4 2025 shows the highest delinquency rate, meaning the true signal is likely understated, not overstated."
+    triggers: ["cohort", "vintage", "trend", "Q4 2025", "newest"]
+
+  no_external_data:
+    text: "This analysis uses only the portfolio data. No external economic data (unemployment, interest rate environment, housing market) is incorporated. Conclusions are limited to what the loan-level data shows."
+    triggers: ["economy", "macro", "external", "why", "cause"]
+
+
+known_insights:
+  - id: "rising_delinquency"
+    finding: "Overall delinquency rose from 4.8% in Q1 2024 to 15.3% in Q4 2025."
+    detail: "This 3x increase in the headline rate is alarming at face value but is explained by credit mix shift."
+
+  - id: "mix_shift_root_cause"
+    finding: "The primary driver is a shift in credit mix toward subprime. Tier C share of originations went from 6% in Q1 2024 to 44% in Q4 2025. Tier A share dropped from 62% to 30%."
+    detail: "This is a mix problem, not a performance problem. The portfolio is originating riskier loans, not seeing existing loans deteriorate."
+
+  - id: "within_tier_stability"
+    finding: "Within-tier delinquency rates are relatively stable. Tier A: 1-4%, Tier B: 6-10%, Tier C: 19-34% across all quarters."
+    detail: "The underwriting standards within each tier appear to be working consistently."
+
+  - id: "cohort_age_understates"
+    finding: "Newer cohorts have had less time to go delinquent, so Q4 2025's 15.3% rate is likely understated."
+    detail: "The cohort age bias works in favor of the finding: the real delinquency trajectory may be worse than the snapshot shows."
+
+  - id: "spread_correlation"
+    finding: "Negative savings spread (borrower pays more for solar than utility) correlates with higher delinquency, especially in Tier C."
+    detail: "Loans where solar costs exceed utility costs have weaker borrower value proposition, which may reduce payment priority."
+
+
+question_patterns:
+  - intent_id: overall_delinquency
+    priority: 10
+    keywords:
+      - "overall delinquency rate"
+      - "delinquency rate"
+      - "portfolio delinquency"
+      - "how many delinquent"
+      - "what percent delinquent"
+      - "total delinquency"
+      - "what is the delinquency"
+      - "how many delinquent"
+      - "how many loans delinquent"
+      - "how many are delinquent"
+      - "percent delinquent"
+    approach: "Calculate count(is_delinquent=TRUE) / count(all). Return single percentage."
+    default_groupby: null
+    chart_type: null
+    response_template: "The overall portfolio delinquency rate is {rate:.1f}% ({count:,} of {total:,} loans are 30+ days past due)."
+
+  - intent_id: delinquency_by_tier
+    priority: 8
+    keywords:
+      - "delinquency by tier"
+      - "delinquency by credit tier"
+      - "which tier"
+      - "tier delinquency"
+      - "tier comparison"
+      - "compare tiers"
+      - "highest delinquency"
+      - "worst tier"
+      - "best tier"
+      - "delinquency across tiers"
+    approach: "Group by credit_tier, calculate delinquency rate per tier. Show count and rate."
+    default_groupby: "credit_tier"
+    chart_type: "bar"
+    response_template: "Delinquency rates by credit tier: Tier A (prime): {a_rate:.1f}%, Tier B (near-prime): {b_rate:.1f}%, Tier C (subprime): {c_rate:.1f}%."
+
+  - intent_id: delinquency_trend
+    priority: 9
+    keywords:
+      - "delinquency over time"
+      - "delinquency trend"
+      - "how has delinquency changed"
+      - "delinquency by quarter"
+      - "quarterly delinquency"
+      - "rising delinquency"
+      - "delinquency increasing"
+      - "delinquency going up"
+    approach: "Group by origination_quarter, calculate delinquency rate per quarter. Show as time series."
+    default_groupby: "origination_quarter"
+    chart_type: "line"
+    response_template: "Delinquency has risen from {first_rate:.1f}% in {first_q} to {last_rate:.1f}% in {last_q}."
+
+  - intent_id: credit_mix_trend
+    priority: 7
+    keywords:
+      - "credit mix"
+      - "mix over time"
+      - "tier composition"
+      - "origination mix"
+      - "how has the mix changed"
+      - "tier share"
+      - "subprime share"
+      - "tier volume"
+    approach: "Group by origination_quarter and credit_tier. Calculate share of each tier per quarter."
+    default_groupby: "origination_quarter"
+    chart_type: "stacked_bar"
+    response_template: "Credit mix has shifted significantly. Tier C share grew from {c_first:.0f}% to {c_last:.0f}% of originations, while Tier A dropped from {a_first:.0f}% to {a_last:.0f}%."
+
+  - intent_id: mix_adjusted_delinquency
+    priority: 9
+    keywords:
+      - "mix adjusted"
+      - "mix-adjusted"
+      - "constant mix"
+      - "if we kept the same mix"
+      - "held mix constant"
+      - "what would delinquency be"
+      - "counterfactual"
+      - "adjusted rate"
+      - "normalize for mix"
+    approach: "Calculate what delinquency would be each quarter if credit tier shares matched Q1 2024. Formula: sum(Q1_2024_tier_share * current_quarter_tier_rate)."
+    default_groupby: "origination_quarter"
+    chart_type: "line"
+    response_template: "If credit mix had stayed at Q1 2024 levels (62% A, 32% B, 6% C), the Q4 2025 delinquency rate would have been approximately {adjusted_rate:.1f}% instead of the actual {actual_rate:.1f}%."
+
+  - intent_id: installer_breakdown
+    priority: 6
+    keywords:
+      - "by installer"
+      - "installer delinquency"
+      - "installer performance"
+      - "which installer"
+      - "worst installer"
+      - "best installer"
+      - "installer partner"
+    approach: "Group by installer_partner, calculate delinquency rate and loan count per installer."
+    default_groupby: "installer_partner"
+    chart_type: "bar"
+    response_template: "Delinquency rates by installer partner:"
+
+  - intent_id: state_breakdown
+    priority: 6
+    keywords:
+      - "by state"
+      - "state delinquency"
+      - "state performance"
+      - "which state"
+      - "worst state"
+      - "best state"
+      - "geographic"
+      - "geography"
+    approach: "Group by state, calculate delinquency rate and loan count per state."
+    default_groupby: "state"
+    chart_type: "bar"
+    response_template: "Delinquency rates by state:"
+
+  - intent_id: dpd_severity
+    priority: 7
+    keywords:
+      - "days past due"
+      - "dpd"
+      - "severity"
+      - "how severe"
+      - "how bad"
+      - "30 60 90"
+      - "delinquency severity"
+      - "loss severity"
+      - "loss provisioning"
+    approach: "Filter to delinquent loans. Bucket days_past_due into 30-59, 60-89, 90-119, 120+. Show distribution."
+    default_groupby: null
+    chart_type: "bar"
+    response_template: "Among {total} delinquent loans: {early} are 30-59 days ({early_pct:.0f}%), {mid} are 60-89 days ({mid_pct:.0f}%), {late} are 90-119 days ({late_pct:.0f}%), {severe} are 120+ days ({severe_pct:.0f}%)."
+
+  - intent_id: savings_spread
+    priority: 7
+    keywords:
+      - "savings spread"
+      - "savings"
+      - "spread"
+      - "solar vs utility"
+      - "utility cost"
+      - "solar cost"
+      - "value proposition"
+      - "borrower savings"
+    approach: "Calculate savings_spread. Analyze relationship between spread and delinquency. Band into ranges."
+    default_groupby: null
+    chart_type: "bar"
+    response_template: "Savings spread analysis:"
+
+  - intent_id: loan_distribution
+    priority: 5
+    keywords:
+      - "loan amount distribution"
+      - "loan size"
+      - "how big are loans"
+      - "average loan"
+      - "loan amounts"
+      - "distribution of loans"
+    approach: "Compute summary stats (mean, median, min, max, std) for loan_amount. Optionally bucket into ranges."
+    default_groupby: null
+    chart_type: "bar"
+    response_template: "Loan amount distribution: average ${mean:,.0f}, median ${median:,.0f}, range ${min:,.0f}-${max:,.0f}."
+
+  - intent_id: portfolio_summary
+    priority: 5
+    keywords:
+      - "portfolio overview"
+      - "portfolio summary"
+      - "summary"
+      - "overview"
+      - "tell me about the portfolio"
+      - "describe the portfolio"
+      - "high level"
+    approach: "Return key portfolio stats: total loans, total volume, delinquency rate, tier breakdown, state count, date range."
+    default_groupby: null
+    chart_type: null
+    response_template: "Portfolio overview:"
+
+  - intent_id: specific_cohort
+    priority: 8
+    keywords:
+      - "delinquency for"
+      - "rate for"
+      - "how many in"
+      - "loans in"
+    approach: "Apply filters from entity extraction (tier, quarter, state, installer) and calculate delinquency rate for the filtered group."
+    default_groupby: null
+    chart_type: null
+    response_template: "For {filter_desc}: delinquency rate is {rate:.1f}% ({count} of {total} loans)."
+
+  - intent_id: installer_tier_cross
+    priority: 8
+    keywords:
+      - "installer by tier"
+      - "installer tier"
+      - "installer subprime"
+      - "installer for tier c"
+      - "worst installer for subprime"
+      - "installer performance by tier"
+      - "cross tab"
+      - "installers worst subprime"
+      - "installers worst for subprime"
+      - "installer worst tier"
+    approach: "Cross-tabulate installer_partner x credit_tier. Calculate delinquency rate for each cell."
+    default_groupby: null
+    chart_type: "bar"
+    response_template: "Installer performance by credit tier:"
+
+  - intent_id: why_rising
+    priority: 10
+    keywords:
+      - "why is delinquency rising"
+      - "why are delinquencies going up"
+      - "what's driving"
+      - "what is driving"
+      - "root cause"
+      - "why the increase"
+      - "explain the rise"
+      - "what happened"
+    approach: "Provide the full narrative: rising headline rate is driven by credit mix shift, not within-tier deterioration. Show credit mix trend + mix-adjusted rate as evidence."
+    default_groupby: null
+    chart_type: "stacked_bar"
+    response_template: ""
+
+  - intent_id: negative_spread
+    priority: 8
+    keywords:
+      - "negative spread"
+      - "negative savings"
+      - "negative savings spread"
+      - "paying more for solar"
+      - "solar costs more"
+      - "underwater"
+      - "upside down"
+      - "how many negative spread"
+      - "how many loans negative"
+      - "loans have negative"
+    approach: "Calculate count and share of loans where savings_spread < 0. Break down by tier."
+    default_groupby: "credit_tier"
+    chart_type: "bar"
+    response_template: "{count} loans ({pct:.1f}%) have a negative savings spread (borrower pays more for solar than utility)."
+
+
+reference_values:
+  states:
+    AZ: ["Arizona", "AZ", "arizona", "az"]
+    CA: ["California", "CA", "california", "ca", "cali"]
+    CO: ["Colorado", "CO", "colorado", "co"]
+    CT: ["Connecticut", "CT", "connecticut", "ct"]
+    FL: ["Florida", "FL", "florida", "fl"]
+    MA: ["Massachusetts", "MA", "massachusetts", "ma", "mass"]
+    NC: ["North Carolina", "NC", "north carolina", "nc"]
+    NJ: ["New Jersey", "NJ", "new jersey", "nj"]
+    NY: ["New York", "NY", "new york", "ny"]
+    TX: ["Texas", "TX", "texas", "tx"]
+
+  credit_tiers:
+    A: ["Tier A", "tier a", "A", "a", "prime", "Prime"]
+    B: ["Tier B", "tier b", "B", "b", "near-prime", "near prime", "Near-prime", "Near Prime"]
+    C: ["Tier C", "tier c", "C", "c", "subprime", "sub-prime", "Subprime", "Sub-prime"]
+
+  installers:
+    "Apex Solar Co": ["Apex", "apex", "Apex Solar", "apex solar"]
+    "BrightPath Solar": ["BrightPath", "brightpath", "Bright Path", "bright path"]
+    "GreenRoof Energy": ["GreenRoof", "greenroof", "Green Roof", "green roof"]
+    "SunPro Electric": ["SunPro", "sunpro", "Sun Pro", "sun pro"]
+    "TerraWatt Installations": ["TerraWatt", "terrawatt", "Terra Watt", "terra watt"]
+
+  quarters:
+    "2024 Q1": ["Q1 2024", "q1 2024", "2024 q1", "first quarter 2024", "jan-mar 2024"]
+    "2024 Q2": ["Q2 2024", "q2 2024", "2024 q2", "second quarter 2024", "apr-jun 2024"]
+    "2024 Q3": ["Q3 2024", "q3 2024", "2024 q3", "third quarter 2024", "jul-sep 2024"]
+    "2024 Q4": ["Q4 2024", "q4 2024", "2024 q4", "fourth quarter 2024", "oct-dec 2024"]
+    "2025 Q1": ["Q1 2025", "q1 2025", "2025 q1", "first quarter 2025", "jan-mar 2025"]
+    "2025 Q2": ["Q2 2025", "q2 2025", "2025 q2", "second quarter 2025", "apr-jun 2025"]
+    "2025 Q3": ["Q3 2025", "q3 2025", "2025 q3", "third quarter 2025", "jul-sep 2025"]
+    "2025 Q4": ["Q4 2025", "q4 2025", "2025 q4", "fourth quarter 2025", "oct-dec 2025", "last quarter", "most recent"]
+
+  loan_terms:
+    120: ["10 year", "10-year", "10 yr", "120 month", "120-month"]
+    180: ["15 year", "15-year", "15 yr", "180 month", "180-month"]
+    240: ["20 year", "20-year", "20 yr", "240 month", "240-month"]
+    300: ["25 year", "25-year", "25 yr", "300 month", "300-month"]
+
+  dimensions:
+    credit_tier: ["by tier", "by credit tier", "per tier", "across tiers", "each tier"]
+    state: ["by state", "by geography", "per state", "across states", "each state", "geographic"]
+    installer_partner: ["by installer", "by partner", "per installer", "across installers", "each installer"]
+    origination_quarter: ["by quarter", "over time", "by period", "quarterly", "per quarter", "each quarter", "trend"]
+    loan_term_months: ["by term", "by loan term", "per term", "across terms"]
+
+
+glossary:
+  capital_markets:
+    delinquency: "Loan is 30+ days past due on payment"
+    vintage: "Loans originated in the same time period (quarter)"
+    seasoning: "How long a loan has been outstanding; more seasoning = more time to observe performance"
+    mix shift: "Change in the composition of originations across risk tiers"
+    loss provisioning: "Setting aside reserves to cover expected losses from delinquent/defaulted loans"
+    spread: "Difference between two rates; here, utility cost minus solar cost"
+    counterfactual: "What would have happened under different assumptions (e.g., constant credit mix)"
+
+  operations:
+    installer partner: "The solar installation company that built the system"
+    system size: "Capacity of the installed solar panel system in kilowatts"
+    savings spread: "How much cheaper (or more expensive) solar is vs the local utility"
+    negative spread: "Borrower is paying more for solar electricity than they would for utility power"

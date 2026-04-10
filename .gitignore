@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.pyo
+portfolio.db
+loan_data_temp.json
+.env
+.vercel
+.claude/
+venv/
+*.egg-info/

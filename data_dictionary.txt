@@ -1,0 +1,21 @@
+DATA DICTIONARY: solar_loan_delinquency.csv
+
+One row per funded residential solar loan, Jan 2024 – Dec 2025.
+Approximately 2,450 loans across 10 states and 5 installer partners.
+
+COLUMNS:
+
+loan_id                                 Unique loan identifier (e.g. L0001)
+origination_date                        Date the loan was funded (YYYY-MM-DD)
+state                                   Two-letter state code for the installation
+credit_tier                             Borrower credit tier at origination: A (prime), B (near-prime), C (subprime)
+loan_amount                             Loan principal in USD
+system_size_kw                          Installed solar system size in kilowatts
+loan_term_months                        Repayment term in months
+interest_rate                           Annual interest rate (e.g. 5.25 = 5.25%)
+monthly_payment                         Monthly loan payment in USD
+installer_partner                       Name of the solar installation company
+cents_per_watt_of_solar_electricity     Estimated cost of electricity from the solar system, in cents per watt
+cents_per_watt_of_utility_electricity   Average local utility electricity cost, in cents per watt
+is_delinquent                           TRUE if the loan is 30+ days past due
+days_past_due                           Number of days past due (0 if current)
