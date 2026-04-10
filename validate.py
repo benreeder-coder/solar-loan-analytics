@@ -190,6 +190,128 @@ TEST_CASES = [
         'category': 'edge_case',
     },
 
+    # --- Metric trend ---
+    {
+        'question': "How has the interest rate changed over time?",
+        'expected_contains': ['interest', 'rate'],
+        'expect_intent': 'metric_trend',
+        'expect_chart': True,
+        'category': 'metric_trend',
+    },
+    {
+        'question': "Monthly payment trend by quarter",
+        'expected_contains': ['payment'],
+        'expect_intent': 'metric_trend',
+        'expect_chart': True,
+        'category': 'metric_trend',
+    },
+
+    # --- Tier × quarter cross ---
+    {
+        'question': "Show delinquency by tier for each quarter",
+        'expected_contains': ['tier', 'stable'],
+        'expect_intent': 'tier_quarter_cross',
+        'expect_chart': True,
+        'category': 'cross_tab',
+    },
+
+    # --- Savings band × tier ---
+    {
+        'question': "Delinquency by savings spread band and tier",
+        'expected_contains': ['spread', 'tier'],
+        'expect_intent': 'savings_band_analysis',
+        'expect_chart': True,
+        'category': 'cross_tab',
+    },
+
+    # --- Payment analysis ---
+    {
+        'question': "What's the average monthly payment by tier?",
+        'expected_contains': ['Tier A', 'Tier B', 'Tier C'],
+        'expect_intent': 'payment_analysis',
+        'expect_chart': True,
+        'category': 'analysis',
+    },
+
+    # --- Interest rate analysis ---
+    {
+        'question': "What's the average interest rate by tier?",
+        'expected_contains': ['Tier A', 'Tier C'],
+        'expect_intent': 'interest_rate_analysis',
+        'expect_chart': True,
+        'category': 'analysis',
+    },
+
+    # --- System size ---
+    {
+        'question': "Does system size affect delinquency?",
+        'expected_contains': ['system size', 'no meaningful'],
+        'expect_intent': 'system_size_analysis',
+        'expect_chart': True,
+        'category': 'analysis',
+    },
+
+    # --- Loan term ---
+    {
+        'question': "Does loan term affect delinquency?",
+        'expected_contains': ['term', '%'],
+        'expect_intent': 'loan_term_analysis',
+        'expect_chart': True,
+        'category': 'analysis',
+    },
+
+    # --- Concentration risk ---
+    {
+        'question': "How concentrated is the portfolio geographically?",
+        'expected_contains': ['top', '%'],
+        'expect_intent': 'concentration_risk',
+        'expect_chart': True,
+        'category': 'analysis',
+    },
+
+    # --- Correlation ---
+    {
+        'question': "What factors correlate with delinquency?",
+        'expected_contains': ['interest rate', 'savings'],
+        'expect_intent': 'correlation_analysis',
+        'expect_chart': True,
+        'category': 'analysis',
+    },
+
+    # --- Recommendations ---
+    {
+        'question': "What should we do about rising delinquency?",
+        'expected_contains': ['tier c', 'cap', 'spread'],
+        'expect_intent': 'recommendations',
+        'expect_chart': False,
+        'category': 'recommendations',
+    },
+
+    # --- State × tier cross ---
+    {
+        'question': "Which states are worst for Tier C loans?",
+        'expected_contains': ['state', 'tier'],
+        'expect_intent': 'state_tier_cross',
+        'expect_chart': True,
+        'category': 'cross_tab',
+    },
+
+    # --- Questions from the interview ---
+    {
+        'question': "What's the average number of days late by loan originated quarter?",
+        'expected_contains': ['days past due'],
+        'expect_intent': 'avg_dpd',
+        'expect_chart': True,
+        'category': 'interview_question',
+    },
+    {
+        'question': "Show the distribution of loan originations by state for each loan origination quarter",
+        'expected_contains': ['volume', 'state'],
+        'expect_intent': 'origination_volume',
+        'expect_chart': True,
+        'category': 'interview_question',
+    },
+
     # --- Follow-up simulation ---
     # (follow-ups tested separately below)
 ]

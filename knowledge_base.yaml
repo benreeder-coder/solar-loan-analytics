@@ -183,7 +183,27 @@ known_insights:
 
   - id: "spread_correlation"
     finding: "Negative savings spread (borrower pays more for solar than utility) correlates with higher delinquency, especially in Tier C."
-    detail: "Loans where solar costs exceed utility costs have weaker borrower value proposition, which may reduce payment priority."
+    detail: "Loans where solar costs exceed utility costs have weaker borrower value proposition, which may reduce payment priority. Tier C at <-2 spread = 54.9% delinquency vs 13.1% at 10+ spread."
+
+  - id: "interest_rate_tiers"
+    finding: "Interest rates are strongly tiered: Tier A avg 5.05%, Tier B 7.50%, Tier C 11.04%. Within-tier rates are stable over time."
+    detail: "Interest rate has the strongest correlation with delinquency (0.306) among available metrics, but this is largely a proxy for credit tier."
+
+  - id: "concentration_stable"
+    finding: "Geographic and installer concentration is stable. Top 3 states (CA, TX, FL) = 46.4% of volume. Tier C is not notably more concentrated than the overall portfolio."
+    detail: "No single state or installer is disproportionately driving the delinquency increase."
+
+  - id: "system_size_no_effect"
+    finding: "System size has no meaningful relationship with delinquency. Rates are flat (10-14%) across all size bands."
+    detail: "System size can be dismissed as a risk factor."
+
+  - id: "state_tier_outliers"
+    finding: "TX has the worst Tier C delinquency at 40.8%, followed by FL at 34.0%. CA has the lowest Tier C rate at 15.5%."
+    detail: "State-level variation within Tier C suggests geographic factors (utility costs, solar production, regulations) interact with credit risk."
+
+  - id: "payment_burden"
+    finding: "Tier C borrowers pay significantly more monthly ($338 avg) than Tier A ($222), driven by higher interest rates on similar loan amounts."
+    detail: "Higher payment burden combined with weaker credit profiles creates compounding risk."
 
 
 question_patterns:
@@ -472,6 +492,212 @@ question_patterns:
     default_groupby: "credit_tier"
     chart_type: "bar"
     response_template: "{count} loans ({pct:.1f}%) have a negative savings spread (borrower pays more for solar than utility)."
+
+  - intent_id: metric_trend
+    priority: 7
+    keywords:
+      - "interest rate over time"
+      - "interest rate trend"
+      - "interest rate by quarter"
+      - "payment over time"
+      - "payment trend"
+      - "monthly payment by quarter"
+      - "average payment over time"
+      - "loan amount over time"
+      - "savings spread over time"
+      - "savings rate over time"
+      - "how has interest rate changed"
+      - "how has payment changed"
+      - "average loan amount by quarter"
+      - "rate trend"
+    approach: "Calculate the average of the requested metric by origination quarter, optionally split by credit tier."
+    default_groupby: "origination_quarter"
+    chart_type: "line"
+    response_template: "Metric trend over time:"
+
+  - intent_id: tier_quarter_cross
+    priority: 9
+    keywords:
+      - "delinquency by tier for each quarter"
+      - "delinquency by tier by quarter"
+      - "tier delinquency over time"
+      - "tier performance over time"
+      - "delinquency rate per tier per quarter"
+      - "within tier delinquency"
+      - "tier delinquency by quarter"
+      - "quarterly delinquency by tier"
+      - "each tier each quarter"
+      - "within-tier rates"
+      - "tier rates over time"
+    approach: "Cross-tab of delinquency rate: credit_tier columns, origination_quarter rows. Shows within-tier stability."
+    default_groupby: null
+    chart_type: "line"
+    response_template: "Delinquency rates by tier and quarter:"
+
+  - intent_id: savings_band_analysis
+    priority: 8
+    keywords:
+      - "savings band"
+      - "savings band by tier"
+      - "delinquency by savings band"
+      - "spread band by tier"
+      - "spread band delinquency"
+      - "savings band and tier"
+      - "savings spread band"
+      - "delinquency by spread and tier"
+    approach: "Band savings_spread into ranges, cross-tab with credit_tier, show delinquency rate per cell."
+    default_groupby: null
+    chart_type: "bar"
+    response_template: "Delinquency by savings spread band and credit tier:"
+
+  - intent_id: payment_analysis
+    priority: 7
+    keywords:
+      - "monthly payment by tier"
+      - "payment by tier"
+      - "average payment by tier"
+      - "payment analysis"
+      - "payment burden"
+      - "higher payments delinquency"
+      - "payment and delinquency"
+      - "payment bands"
+      - "do higher payments"
+      - "payment distribution by tier"
+    approach: "Analyze monthly payment by tier and/or as banded analysis against delinquency."
+    default_groupby: "credit_tier"
+    chart_type: "bar"
+    response_template: "Monthly payment analysis:"
+
+  - intent_id: interest_rate_analysis
+    priority: 8
+    keywords:
+      - "average interest rate"
+      - "interest rate by tier"
+      - "interest rate by state"
+      - "interest rate analysis"
+      - "rate by tier"
+      - "how does interest rate relate"
+      - "interest rate and delinquency"
+      - "average rate by tier"
+      - "what rate do we charge"
+    approach: "Show average interest rate by the requested dimension + correlation with delinquency."
+    default_groupby: "credit_tier"
+    chart_type: "bar"
+    response_template: "Interest rate analysis:"
+
+  - intent_id: system_size_analysis
+    priority: 7
+    keywords:
+      - "system size"
+      - "system size and delinquency"
+      - "does system size affect"
+      - "system size distribution"
+      - "average system size"
+      - "kilowatt"
+      - "kw distribution"
+      - "panel size"
+    approach: "Band system_size_kw into ranges, show delinquency rate per band. Note: no meaningful relationship."
+    default_groupby: null
+    chart_type: "bar"
+    response_template: "System size analysis:"
+
+  - intent_id: loan_term_analysis
+    priority: 7
+    keywords:
+      - "loan term"
+      - "term analysis"
+      - "delinquency by term"
+      - "term and delinquency"
+      - "10 year 15 year"
+      - "term length"
+      - "does term affect"
+      - "repayment term"
+      - "what terms"
+    approach: "Show delinquency rate, count, avg interest rate, avg loan amount per loan term bucket."
+    default_groupby: null
+    chart_type: "bar"
+    response_template: "Loan term analysis:"
+
+  - intent_id: concentration_risk
+    priority: 7
+    keywords:
+      - "concentration"
+      - "concentration risk"
+      - "top states"
+      - "top installers"
+      - "what percent from"
+      - "is tier c concentrated"
+      - "geographic concentration"
+      - "volume concentration"
+      - "how concentrated"
+    approach: "Show top-N contributors by volume share. Check if Tier C is over-represented in specific states/installers."
+    default_groupby: null
+    chart_type: "bar"
+    response_template: "Concentration analysis:"
+
+  - intent_id: correlation_analysis
+    priority: 8
+    keywords:
+      - "correlate"
+      - "correlation"
+      - "what factors"
+      - "what predicts"
+      - "what drives delinquency"
+      - "factors correlate"
+      - "predictors"
+      - "what affects delinquency"
+      - "what influences"
+      - "risk factors"
+    approach: "Calculate correlation of all numeric columns with is_delinquent. Rank by absolute value."
+    default_groupby: null
+    chart_type: "bar"
+    response_template: "Factors correlated with delinquency:"
+
+  - intent_id: recommendations
+    priority: 11
+    keywords:
+      - "what should we do"
+      - "recommendations"
+      - "recommend"
+      - "tighten underwriting"
+      - "what changes"
+      - "should we change"
+      - "action items"
+      - "what would you suggest"
+      - "underwriting changes"
+      - "policy changes"
+      - "how to reduce delinquency"
+      - "mitigate"
+      - "what should we do about"
+      - "what do you recommend"
+      - "should we tighten"
+    approach: "Provide data-backed underwriting recommendations: Tier C caps, spread minimums, state watchlist, mix targets."
+    default_groupby: null
+    chart_type: null
+    response_template: ""
+
+  - intent_id: state_tier_cross
+    priority: 10
+    keywords:
+      - "state by tier"
+      - "state tier"
+      - "state and tier"
+      - "state tier delinquency"
+      - "state tier matrix"
+      - "worst state for tier c"
+      - "worst state for subprime"
+      - "worst state tier c"
+      - "worst states for tier c"
+      - "states worst for tier"
+      - "state tier cross"
+      - "delinquency by state and tier"
+      - "state performance by tier"
+      - "states worst subprime"
+      - "states are worst for tier"
+    approach: "Cross-tab of state × credit_tier delinquency rate. Highlight outliers like TX Tier C = 40.8%."
+    default_groupby: null
+    chart_type: "bar"
+    response_template: "Delinquency rates by state and credit tier:"
 
 
 reference_values:
