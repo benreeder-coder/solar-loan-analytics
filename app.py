@@ -35,9 +35,14 @@ with open(os.path.join(DATA_DIR, 'knowledge_base.yaml'), 'r') as f:
 engine = QueryEngine(df, kb)
 
 # Load into SQLite (for transparency / future LLM mode)
-db_path = os.path.join(DATA_DIR, 'portfolio.db')
-conn = sqlite3.connect(db_path, check_same_thread=False)
-engine.df.to_sql('loans', conn, if_exists='replace', index=False)
+# Use /tmp on Vercel (read-only filesystem outside /tmp)
+try:
+    import tempfile
+    db_path = os.path.join(tempfile.gettempdir(), 'portfolio.db')
+    conn = sqlite3.connect(db_path, check_same_thread=False)
+    engine.df.to_sql('loans', conn, if_exists='replace', index=False)
+except Exception:
+    conn = None  # SQLite optional, pandas handles all queries
 
 # ---------------------------------------------------------------------------
 # Routes
