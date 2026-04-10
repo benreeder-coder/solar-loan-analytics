@@ -82,6 +82,8 @@ class QueryEngine:
             'installer_tier_cross': self._handle_installer_tier_cross,
             'why_rising': self._handle_why_rising,
             'negative_spread': self._handle_negative_spread,
+            'avg_dpd': self._handle_avg_dpd,
+            'origination_volume': self._handle_origination_volume,
         }
 
     # -----------------------------------------------------------------------
@@ -170,7 +172,7 @@ class QueryEngine:
                 best_priority = priority
                 best_intent = pattern['intent_id']
 
-        if best_score < 1:
+        if best_score < 2:
             return None, 0
 
         # Dimension-aware redirect: if user said "by [dimension]" and the matched
@@ -1146,3 +1148,173 @@ class QueryEngine:
             caveats=[self.kb['caveats']['cents_per_watt_unit_ambiguity']['text']],
             suggested_followups=["Show me savings spread analysis", "Why is delinquency rising?"],
         )
+
+    def _handle_avg_dpd(self, question, entities):
+        """Average days past due, optionally grouped by a dimension."""
+        df, desc = self._apply_filters(self.df, entities['filters'])
+        groupby = entities.get('groupby') or 'origination_quarter'
+
+        if groupby == 'origination_quarter':
+            grouped = df.groupby('origination_quarter').agg(
+                total=('days_past_due', 'count'),
+                avg_dpd=('days_past_due', 'mean'),
+                deliq_count=('is_delinquent', 'sum'),
+            ).reindex(self.quarter_order).reset_index()
+        else:
+            grouped = df.groupby(groupby).agg(
+                total=('days_past_due', 'count'),
+                avg_dpd=('days_past_due', 'mean'),
+                deliq_count=('is_delinquent', 'sum'),
+            ).reset_index().sort_values('avg_dpd', ascending=False)
+
+        grouped['avg_dpd'] = grouped['avg_dpd'].round(1)
+
+        rows = []
+        for _, r in grouped.iterrows():
+            rows.append([str(r[groupby]), f"{int(r['total']):,}", f"{r['avg_dpd']:.1f}", f"{int(r['deliq_count']):,}"])
+
+        # Also compute delinquent-only average
+        deliq_df = df[df['is_delinquent'] == True]
+        if len(deliq_df) > 0 and groupby == 'origination_quarter':
+            deliq_grouped = deliq_df.groupby('origination_quarter')['days_past_due'].mean().reindex(self.quarter_order)
+            deliq_avgs = [round(v, 1) if pd.notna(v) else 0 for v in deliq_grouped.values]
+        else:
+            deliq_avgs = None
+
+        overall_avg = df['days_past_due'].mean()
+        deliq_avg = deliq_df['days_past_due'].mean() if len(deliq_df) > 0 else 0
+
+        answer = (
+            f"Average days past due across all loans: {overall_avg:.1f} days. "
+            f"Among delinquent loans only: {deliq_avg:.1f} days."
+        )
+        if desc != "all loans":
+            answer = f"For {desc}: " + answer
+
+        chart = {
+            'type': 'bar' if groupby != 'origination_quarter' else 'line',
+            'title': f"Average Days Past Due by {groupby.replace('_', ' ').title()}",
+            'labels': [str(r[groupby]) for _, r in grouped.iterrows()],
+            'datasets': [{
+                'label': 'Avg DPD (all loans)',
+                'data': list(grouped['avg_dpd']),
+            }],
+            'axes': {
+                'x': {'label': groupby.replace('_', ' ').title()},
+                'y': {'label': 'Average Days Past Due'},
+            },
+            'theme': 'exec',
+        }
+        if deliq_avgs and groupby == 'origination_quarter':
+            chart['datasets'].append({
+                'label': 'Avg DPD (delinquent only)',
+                'data': deliq_avgs,
+                'style': 'dashed',
+            })
+
+        return QueryResult(
+            intent='avg_dpd',
+            question=question,
+            answer_text=answer,
+            data=self._table([groupby.replace('_', ' ').title(), 'Total Loans', 'Avg DPD', 'Delinquent Count'], rows),
+            chart_spec=chart,
+            calculation=f"df.groupby('{groupby}')['days_past_due'].mean()",
+            suggested_followups=["How severe are the delinquencies?", "Break that down by tier"],
+        )
+
+    def _handle_origination_volume(self, question, entities):
+        """Loan origination volume, optionally as a cross-tab of two dimensions."""
+        df, desc = self._apply_filters(self.df, entities['filters'])
+        groupby = entities.get('groupby')
+
+        # Detect if question asks for a cross-tab (two dimensions)
+        text_lower = question.lower()
+        has_quarter = any(w in text_lower for w in ['quarter', 'over time', 'each quarter', 'per quarter', 'by quarter'])
+        has_second_dim = groupby and groupby != 'origination_quarter'
+
+        if has_quarter and has_second_dim:
+            # Cross-tab: dimension × quarter
+            cross = df.groupby(['origination_quarter', groupby]).size().unstack(fill_value=0)
+            cross = cross.reindex(self.quarter_order).fillna(0).astype(int)
+            dim_values = sorted(df[groupby].unique())
+
+            rows = []
+            for q in self.quarter_order:
+                if q in cross.index:
+                    row = [q]
+                    for val in dim_values:
+                        count = int(cross.loc[q, val]) if val in cross.columns else 0
+                        row.append(f"{count:,}")
+                    row.append(f"{int(cross.loc[q].sum()):,}")
+                    rows.append(row)
+
+            columns = ['Quarter'] + [str(v) for v in dim_values] + ['Total']
+
+            answer = f"Loan origination volume by {groupby.replace('_', ' ')} and quarter:"
+            if desc != "all loans":
+                answer = f"For {desc}: " + answer
+
+            chart = {
+                'type': 'stacked_bar',
+                'title': f"Origination Volume: {groupby.replace('_', ' ').title()} by Quarter",
+                'labels': list(self.quarter_order),
+                'datasets': [],
+                'axes': {
+                    'x': {'label': 'Origination Quarter'},
+                    'y': {'label': 'Number of Loans'},
+                },
+                'theme': 'exec',
+            }
+            for i, val in enumerate(dim_values):
+                data = [int(cross.loc[q, val]) if q in cross.index and val in cross.columns else 0 for q in self.quarter_order]
+                ds = {'label': str(val), 'data': data}
+                # Use tier colors if dimension is credit_tier
+                if groupby == 'credit_tier' and val in ('A', 'B', 'C'):
+                    ds['tier'] = val
+                chart['datasets'].append(ds)
+
+            return QueryResult(
+                intent='origination_volume',
+                question=question,
+                answer_text=answer,
+                data=self._table(columns, rows),
+                chart_spec=chart,
+                calculation=f"df.groupby(['origination_quarter', '{groupby}']).size().unstack(fill_value=0)",
+                suggested_followups=["How has the credit mix changed?", "Show me delinquency by quarter"],
+            )
+
+        else:
+            # Single dimension volume
+            groupby = groupby or 'origination_quarter'
+            if groupby == 'origination_quarter':
+                grouped = df.groupby('origination_quarter').size().reindex(self.quarter_order).fillna(0).astype(int)
+            else:
+                grouped = df.groupby(groupby).size().sort_values(ascending=False)
+
+            rows = [[str(idx), f"{int(val):,}"] for idx, val in grouped.items()]
+
+            answer = f"Loan origination volume by {groupby.replace('_', ' ')}:"
+            if desc != "all loans":
+                answer = f"For {desc}: " + answer
+
+            chart = {
+                'type': 'bar',
+                'title': f"Origination Volume by {groupby.replace('_', ' ').title()}",
+                'labels': [str(idx) for idx in grouped.index],
+                'datasets': [{'label': 'Number of Loans', 'data': [int(v) for v in grouped.values]}],
+                'axes': {
+                    'x': {'label': groupby.replace('_', ' ').title()},
+                    'y': {'label': 'Number of Loans'},
+                },
+                'theme': 'exec',
+            }
+
+            return QueryResult(
+                intent='origination_volume',
+                question=question,
+                answer_text=answer,
+                data=self._table([groupby.replace('_', ' ').title(), 'Loan Count'], rows),
+                chart_spec=chart,
+                calculation=f"df.groupby('{groupby}').size()",
+                suggested_followups=["Break that down by tier", "Show me the credit mix trend"],
+            )

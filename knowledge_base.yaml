@@ -412,6 +412,49 @@ question_patterns:
     chart_type: "stacked_bar"
     response_template: ""
 
+  - intent_id: avg_dpd
+    priority: 8
+    keywords:
+      - "average days past due"
+      - "average days late"
+      - "avg days past due"
+      - "avg dpd"
+      - "mean days past due"
+      - "average number of days late"
+      - "average number of days past due"
+      - "how late are loans"
+      - "how many days late"
+      - "days late by"
+      - "dpd by quarter"
+      - "dpd by tier"
+      - "dpd over time"
+      - "average dpd"
+    approach: "Calculate mean(days_past_due) grouped by the requested dimension. Show both all-loans and delinquent-only averages."
+    default_groupby: "origination_quarter"
+    chart_type: "line"
+    response_template: "Average days past due:"
+
+  - intent_id: origination_volume
+    priority: 8
+    keywords:
+      - "origination volume"
+      - "loan originations"
+      - "how many loans originated"
+      - "number of loans originated"
+      - "distribution of originations"
+      - "distribution of loan originations"
+      - "origination count"
+      - "loans originated by"
+      - "volume by"
+      - "how many loans by"
+      - "loan count by"
+      - "originations by state"
+      - "originations by quarter"
+    approach: "Count loans by the requested dimensions. Supports cross-tabs (e.g., state by quarter)."
+    default_groupby: "origination_quarter"
+    chart_type: "stacked_bar"
+    response_template: "Loan origination volume:"
+
   - intent_id: negative_spread
     priority: 8
     keywords:
